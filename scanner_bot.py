@@ -6,7 +6,7 @@ import whois
 from urllib.parse import urlparse
 import datetime
 
-from telegram.ext import ApplicationBuilder, MessageHandler, filters
+from telegram.ext import Updater, MessageHandler, Filters
 
 # -------------------------------
 # 1. Google Safe Browsing Check
@@ -74,7 +74,10 @@ def check_phishing_patterns(url):
         "crypto","bank","telegram-login","support","update",
         "security","confirm","unlock","recover"
     ]
-    return any(p in url.lower() for p in patterns)
+    for p in patterns:
+        if p in url.lower():
+            return True
+    return False
 
 
 # -------------------------------
@@ -92,7 +95,7 @@ def check_url_structure(url):
 
 
 # -------------------------------
-# FINAL SCAN FUNCTION
+# FINAL SCAN
 # -------------------------------
 def scan_link(url):
     return {
@@ -105,48 +108,49 @@ def scan_link(url):
 
 
 # -------------------------------
-# TELEGRAM MESSAGE HANDLER
+# TELEGRAM HANDLER (PTB 13)
 # -------------------------------
-async def handle_message(update, context):
+def handle_message(update, context):
     url = update.message.text.strip()
 
     if not url.startswith("http"):
-        await update.message.reply_text("❌ Please send a valid URL.")
+        update.message.reply_text("❌ Please send a valid URL.")
         return
 
-    await update.message.reply_text("⏳ Scanning... please wait...")
+    update.message.reply_text("⏳ Scanning... please wait...")
 
-    res = scan_link(url)
+    result = scan_link(url)
 
-    msg = "🔍 **SCAN RESULTS** 🔍\n\n"
-    msg += f"🛡 Google Blacklist: {'❌ Found' if res['safe_browsing'] else '✔ Clean'}\n"
+    reply = "🔍 SCAN RESULTS 🔍\n\n"
+    reply += f"🛡 Google Blacklist: {'❌ Found' if result['safe_browsing'] else '✔ Clean'}\n"
 
-    if res["domain_age"] == -1:
-        msg += "📅 Domain Age: ❌ Unknown / Suspicious\n"
-    elif res["domain_age"] < 60:
-        msg += f"📅 Domain Age: ❌ {res['domain_age']} days (Too new)\n"
+    if result["domain_age"] == -1:
+        reply += "📅 Domain Age: ❌ Unknown / Suspicious\n"
+    elif result["domain_age"] < 60:
+        reply += f"📅 Domain Age: ❌ {result['domain_age']} days (Too new)\n"
     else:
-        msg += f"📅 Domain Age: ✔ {res['domain_age']} days\n"
+        reply += f"📅 Domain Age: ✔ {result['domain_age']} days\n"
 
-    msg += f"🔒 SSL: {'✔ Valid' if res['ssl'] else '❌ No SSL'}\n"
-    msg += f"🎯 Phishing Pattern: {'❌ Detected' if res['phishing'] else '✔ None'}\n"
-    msg += f"🔗 URL Structure: {'❌ Suspicious' if res['structure'] else '✔ Normal'}\n"
+    reply += f"🔒 SSL: {'✔ Valid' if result['ssl'] else '❌ No SSL'}\n"
+    reply += f"🎯 Phishing Pattern: {'❌ Detected' if result['phishing'] else '✔ None'}\n"
+    reply += f"🔗 URL Structure: {'❌ Suspicious' if result['structure'] else '✔ Normal'}\n"
 
-    await update.message.reply_text(msg)
+    update.message.reply_text(reply)
 
 
 # -------------------------------
-# START BOT
+# START BOT (Updater)
 # -------------------------------
 def main():
-    TELEGRAM_TOKEN = "8403701105:AAFdYXTHK9I0ChIJn7RxSb7ak1qN43GCkUs"  # IMPORTANT
+    TELEGRAM_TOKEN = "8403701105:AAFdYXTHK9I0ChIJn7RxSb7ak1qN43GCkUs"
 
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).concurrent_updates(True).build()
+    updater = Updater(TELEGRAM_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-    app.add_handler(MessageHandler(filters.TEXT, handle_message))
+    dp.add_handler(MessageHandler(Filters.text, handle_message))
 
-    print("BOT IS RUNNING...")
-    app.run_polling()
+    updater.start_polling()
+    updater.idle()
 
 
 main()
