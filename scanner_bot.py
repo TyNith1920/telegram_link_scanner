@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import re
 import requests
 import ssl
@@ -6,20 +5,16 @@ import socket
 import whois
 from urllib.parse import urlparse
 import datetime
+import json
 
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from telegram.ext import Updater, MessageHandler, Filters
 
 # ================================
 # 🔧 CONFIG
 # ================================
 TELEGRAM_TOKEN = "8403701105:AAFdYXTHK9I0ChIJn7RxSb7ak1qN43GCkUs"
 GOOGLE_API_KEY = "AIzaSyCOjfLfg3E2FXoEoaSd714iL91bpxZYN7g"
-ADMIN_CHAT_ID = 1000022305  # Your admin ID
+ADMIN_CHAT_ID = 1000022305  # Change to your admin ID
 
 
 # ================================
@@ -35,7 +30,6 @@ def check_safe_browsing(url):
                 "MALWARE",
                 "SOCIAL_ENGINEERING",
                 "UNWANTED_SOFTWARE",
-                "POTENTIALLY_HARMFUL_APPLICATION"
             ],
             "platformTypes": ["ANY_PLATFORM"],
             "threatEntryTypes": ["URL"],
@@ -52,17 +46,22 @@ def check_safe_browsing(url):
 
 
 # ================================
-# 📅 2. DOMAIN AGE CHECK
+# 📅 2. DOMAN AGE CHECK
 # ================================
 def check_domain_age(url):
     domain = urlparse(url).netloc
+
     try:
         info = whois.whois(domain)
         creation_date = info.creation_date
+
         if isinstance(creation_date, list):
             creation_date = creation_date[0]
-        age_days = (datetime.datetime.now() - creation_date).days
-        return age_days
+
+        if creation_date:
+            return (datetime.datetime.now() - creation_date).days
+        else:
+            return -1
     except:
         return -1
 
@@ -82,7 +81,7 @@ def check_ssl(url):
 
 
 # ================================
-# 🎯 4. PHISHING WORDS
+# 🎯 4. PHISHING WORD CHECK
 # ================================
 def check_phishing_words(url):
     words = [
@@ -97,7 +96,7 @@ def check_phishing_words(url):
 
 
 # ================================
-# 🌍 5. SHORT URL EXPANDING
+# 🌍 5. EXPAND SHORT URL
 # ================================
 def expand_url(url):
     try:
@@ -111,11 +110,12 @@ def expand_url(url):
 # ⚠ 6. URL STRUCTURE CHECK
 # ================================
 def check_url_structure(url):
-    suspicious_chars = ["@", "%", "$", "!", "\\", "&"]
-    if any(c in url for c in suspicious_chars):
+    if any(c in url for c in ["@", "%", "$", "!", "\\", "&"]):
         return True
+
     if len(url) > 120:
         return True
+
     return False
 
 
@@ -143,16 +143,16 @@ def calculate_risk(data):
 # 🔍 MAIN SCAN FUNCTION
 # ================================
 def scan_url(url):
-    exp = expand_url(url)
+    expanded = expand_url(url)
 
     results = {
         "original": url,
-        "expanded": exp,
-        "safe_browsing": check_safe_browsing(exp),
-        "domain_age": check_domain_age(exp),
-        "ssl": check_ssl(exp),
-        "phishing_words": check_phishing_words(exp),
-        "structure": check_url_structure(exp)
+        "expanded": expanded,
+        "safe_browsing": check_safe_browsing(expanded),
+        "domain_age": check_domain_age(expanded),
+        "ssl": check_ssl(expanded),
+        "phishing_words": check_phishing_words(expanded),
+        "structure": check_url_structure(expanded),
     }
 
     results["risk"] = calculate_risk(results)
@@ -160,83 +160,83 @@ def scan_url(url):
 
 
 # ================================
-# 📩 FORMAT RESULT
+# 📄 FORMAT RESULT
 # ================================
 def format_result(r):
-    msg = "🔍 **PRO SCAN RESULTS** 🔍\n\n"
-    msg += f"🔗 **Original URL:** {r['original']}\n"
-    msg += f"↪ **Expanded:** {r['expanded']}\n\n"
+    msg = "🔍 *PRO SCAN RESULTS*\n\n"
+    msg += f"🔗 *Original:* {r['original']}\n"
+    msg += f"↪ *Expanded:* {r['expanded']}\n\n"
 
-    msg += f"🛡 **Google Blacklist:** {'❌ Unsafe' if r['safe_browsing'] else '✔ Clean'}\n"
+    msg += f"🛡 *Google Blacklist:* {'❌ Unsafe' if r['safe_browsing'] else '✔ Clean'}\n"
 
     if r['domain_age'] == -1:
-        msg += "📅 **Domain Age:** ❌ Unknown / Suspicious\n"
+        msg += "📅 *Domain Age:* ❌ Unknown / Suspicious\n"
     else:
-        msg += f"📅 **Domain Age:** {r['domain_age']} days\n"
+        msg += f"📅 *Domain Age:* {r['domain_age']} days\n"
 
-    msg += f"🔒 **SSL:** {'✔ Valid' if r['ssl'] else '❌ No SSL'}\n"
-    msg += f"🎯 **Phishing Words:** {'❌ Detected' if r['phishing_words'] else '✔ None'}\n"
-    msg += f"🌍 **Structure:** {'❌ Suspicious' if r['structure'] else '✔ Normal'}\n"
-    msg += f"\n⚠ **RISK SCORE:** {r['risk']}/100\n"
+    msg += f"🔒 *SSL:* {'✔ Valid' if r['ssl'] else '❌ No SSL'}\n"
+    msg += f"🎯 *Phishing Words:* {'❌ Detected' if r['phishing_words'] else '✔ None'}\n"
+    msg += f"🏗 *Structure:* {'❌ Suspicious' if r['structure'] else '✔ Normal'}\n"
+
+    msg += f"\n⚠ *RISK SCORE:* {r['risk']}/100\n"
 
     if r['risk'] >= 70:
-        msg += "\n🚨 **HIGH RISK! Do NOT trust this link!**"
+        msg += "\n🚨 *HIGH RISK — DO NOT TRUST!*"
     elif r['risk'] >= 40:
-        msg += "\n⚠ **Medium Risk — Be careful.**"
+        msg += "\n⚠ *Medium Risk — Be careful.*"
     else:
-        msg += "\n🟢 **Low Risk — Looks OK.**"
+        msg += "\n🟢 *Low Risk — Safe.*"
 
     return msg
 
 
 # ================================
-# 🚨 ADMIN ALERT
+# 🚨 AUTO ADMIN ALERT
 # ================================
-async def notify_admin(context, user, result):
+def notify_admin(context, user, result):
     if result["risk"] >= 70:
         alert = f"""
-🚨 **Suspicious Link Alert!**
+🚨 *Suspicious Link Alert!*
 
 👤 User: {user}
 🔗 Link: {result['original']}
 ⚠ Risk Score: {result['risk']}/100
 """
-        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=alert, parse_mode="Markdown")
+        context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=alert, parse_mode="Markdown")
 
 
 # ================================
-# 🤖 TELEGRAM HANDLER (NEW API)
+# 🤖 TELEGRAM BOT HANDLER (v13.14)
 # ================================
-async def handle_message(update, context: ContextTypes.DEFAULT_TYPE):
-
+def handle_message(update, context):
     url = update.message.text.strip()
 
     if not url.startswith("http"):
-        await update.message.reply_text("❌ Please send a valid URL.")
+        update.message.reply_text("❌ Please send a valid URL.")
         return
 
-    await update.message.reply_text("⏳ Scanning... please wait...")
+    update.message.reply_text("⏳ Scanning... please wait...")
 
     results = scan_url(url)
     reply = format_result(results)
 
-    await update.message.reply_text(reply, parse_mode="Markdown")
+    update.message.reply_text(reply, parse_mode="Markdown")
 
-    # alert admin
-    await notify_admin(context, update.message.from_user.username, results)
+    # ADMIN ALERT
+    notify_admin(context, update.message.from_user.username, results)
 
 
 # ================================
-# 🚀 RUN BOT (NEW API)
+# 🚀 RUN BOT
 # ================================
-async def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+def main():
+    updater = Updater(TELEGRAM_TOKEN, use_context=True)
+    dp = updater.dispatcher
 
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 
-    await app.run_polling()
+    updater.start_polling()
+    updater.idle()
 
 
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+main()
