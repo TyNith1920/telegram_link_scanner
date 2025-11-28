@@ -1,5 +1,6 @@
 python-telegram-bot==13.14
 requests
-beautifulsoup4
 python-whois
 pytz
+beautifulsoup4
+lxml
