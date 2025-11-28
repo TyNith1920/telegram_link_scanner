@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import re
 import requests
 import ssl
@@ -5,16 +6,20 @@ import socket
 import whois
 from urllib.parse import urlparse
 import datetime
-import json
 
-from telegram.ext import Updater, MessageHandler, Filters
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
 
 # ================================
 # 🔧 CONFIG
 # ================================
 TELEGRAM_TOKEN = "8403701105:AAFdYXTHK9I0ChIJn7RxSb7ak1qN43GCkUs"
 GOOGLE_API_KEY = "AIzaSyCOjfLfg3E2FXoEoaSd714iL91bpxZYN7g"
-ADMIN_CHAT_ID = 1000022305  # Change to your admin ID
+ADMIN_CHAT_ID = 1000022305  # Your admin ID
 
 
 # ================================
@@ -59,7 +64,7 @@ def check_domain_age(url):
         age_days = (datetime.datetime.now() - creation_date).days
         return age_days
     except:
-        return -1  # Unknown / Suspicious
+        return -1
 
 
 # ================================
@@ -115,7 +120,7 @@ def check_url_structure(url):
 
 
 # ================================
-# 🧮 7. AUTO RISK SCORE
+# 🧮 7. RISK SCORE
 # ================================
 def calculate_risk(data):
     score = 0
@@ -138,16 +143,16 @@ def calculate_risk(data):
 # 🔍 MAIN SCAN FUNCTION
 # ================================
 def scan_url(url):
-    expanded = expand_url(url)
+    exp = expand_url(url)
 
     results = {
         "original": url,
-        "expanded": expanded,
-        "safe_browsing": check_safe_browsing(expanded),
-        "domain_age": check_domain_age(expanded),
-        "ssl": check_ssl(expanded),
-        "phishing_words": check_phishing_words(expanded),
-        "structure": check_url_structure(expanded)
+        "expanded": exp,
+        "safe_browsing": check_safe_browsing(exp),
+        "domain_age": check_domain_age(exp),
+        "ssl": check_ssl(exp),
+        "phishing_words": check_phishing_words(exp),
+        "structure": check_url_structure(exp)
     }
 
     results["risk"] = calculate_risk(results)
@@ -185,9 +190,9 @@ def format_result(r):
 
 
 # ================================
-# 🚨 AUTO-WARN ADMIN
+# 🚨 ADMIN ALERT
 # ================================
-def notify_admin(context, user, result):
+async def notify_admin(context, user, result):
     if result["risk"] >= 70:
         alert = f"""
 🚨 **Suspicious Link Alert!**
@@ -196,42 +201,42 @@ def notify_admin(context, user, result):
 🔗 Link: {result['original']}
 ⚠ Risk Score: {result['risk']}/100
 """
-        context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=alert, parse_mode="Markdown")
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=alert, parse_mode="Markdown")
 
 
 # ================================
-# 🤖 TELEGRAM HANDLER
+# 🤖 TELEGRAM HANDLER (NEW API)
 # ================================
-def handle_message(update, context):
+async def handle_message(update, context: ContextTypes.DEFAULT_TYPE):
+
     url = update.message.text.strip()
 
     if not url.startswith("http"):
-        update.message.reply_text("❌ Please send a valid URL.")
+        await update.message.reply_text("❌ Please send a valid URL.")
         return
 
-    update.message.reply_text("⏳ Scanning... please wait...")
+    await update.message.reply_text("⏳ Scanning... please wait...")
 
     results = scan_url(url)
     reply = format_result(results)
 
-    update.message.reply_text(reply, parse_mode="Markdown")
+    await update.message.reply_text(reply, parse_mode="Markdown")
 
-    # notify admin
-    notify_admin(context, update.message.from_user.username, results)
+    # alert admin
+    await notify_admin(context, update.message.from_user.username, results)
 
 
 # ================================
-# 🚀 RUN BOT
+# 🚀 RUN BOT (NEW API)
 # ================================
-def main():
-    updater = Updater(TELEGRAM_TOKEN, use_context=True)
-    dp = updater.dispatcher
+async def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    dp.add_handler(MessageHandler(Filters.text, handle_message))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    updater.start_polling()
-    updater.idle()
+    await app.run_polling()
 
 
-main()
-
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
