@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import re
 import requests
 import ssl
@@ -5,7 +8,7 @@ import socket
 import whois
 from urllib.parse import urlparse
 import datetime
-import json
+from bs4 import BeautifulSoup
 
 from telegram.ext import Updater, MessageHandler, Filters
 
@@ -14,11 +17,11 @@ from telegram.ext import Updater, MessageHandler, Filters
 # ================================
 TELEGRAM_TOKEN = "8403701105:AAFdYXTHK9I0ChIJn7RxSb7ak1qN43GCkUs"
 GOOGLE_API_KEY = "AIzaSyCOjfLfg3E2FXoEoaSd714iL91bpxZYN7g"
-ADMIN_CHAT_ID = 1000022305  # Change to your admin ID
+ADMIN_CHAT_ID = 1000022305  # Change to your Telegram ID
 
 
 # ================================
-# 🔍 1. GOOGLE SAFE BROWSING
+# 1️⃣ GOOGLE SAFE BROWSING
 # ================================
 def check_safe_browsing(url):
     endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GOOGLE_API_KEY}"
@@ -46,7 +49,7 @@ def check_safe_browsing(url):
 
 
 # ================================
-# 📅 2. DOMAN AGE CHECK
+# 2️⃣ DOMAIN AGE CHECK
 # ================================
 def check_domain_age(url):
     domain = urlparse(url).netloc
@@ -58,16 +61,13 @@ def check_domain_age(url):
         if isinstance(creation_date, list):
             creation_date = creation_date[0]
 
-        if creation_date:
-            return (datetime.datetime.now() - creation_date).days
-        else:
-            return -1
+        return (datetime.datetime.now() - creation_date).days
     except:
         return -1
 
 
 # ================================
-# 🔐 3. SSL CHECK
+# 3️⃣ SSL CHECK
 # ================================
 def check_ssl(url):
     try:
@@ -81,7 +81,7 @@ def check_ssl(url):
 
 
 # ================================
-# 🎯 4. PHISHING WORD CHECK
+# 4️⃣ PHISHING WORD DETECTION
 # ================================
 def check_phishing_words(url):
     words = [
@@ -89,14 +89,11 @@ def check_phishing_words(url):
         "bonus", "free", "bank", "update", "security",
         "unlock", "recover", "gift", "telegram-login"
     ]
-    for w in words:
-        if w in url.lower():
-            return True
-    return False
+    return any(w in url.lower() for w in words)
 
 
 # ================================
-# 🌍 5. EXPAND SHORT URL
+# 5️⃣ SHORT URL EXPAND
 # ================================
 def expand_url(url):
     try:
@@ -107,7 +104,7 @@ def expand_url(url):
 
 
 # ================================
-# ⚠ 6. URL STRUCTURE CHECK
+# 6️⃣ URL STRUCTURE CHECK
 # ================================
 def check_url_structure(url):
     if any(c in url for c in ["@", "%", "$", "!", "\\", "&"]):
@@ -120,7 +117,7 @@ def check_url_structure(url):
 
 
 # ================================
-# 🧮 7. RISK SCORE
+# 7️⃣ RISK SCORE
 # ================================
 def calculate_risk(data):
     score = 0
@@ -140,7 +137,7 @@ def calculate_risk(data):
 
 
 # ================================
-# 🔍 MAIN SCAN FUNCTION
+# 8️⃣ FULL URL SCANNER
 # ================================
 def scan_url(url):
     expanded = expand_url(url)
@@ -160,7 +157,72 @@ def scan_url(url):
 
 
 # ================================
-# 📄 FORMAT RESULT
+# 9️⃣ FACEBOOK PAGE SCAM CHECK
+# ================================
+def check_facebook_page(url):
+    result = {
+        "valid": False,
+        "followers": None,
+        "has_transparency": False,
+        "profile_pic": False,
+        "posts_count": 0,
+        "risk": 0
+    }
+
+    if "facebook.com" not in url:
+        return result
+
+    try:
+        html = requests.get(url, timeout=8).text
+    except:
+        return result
+
+    soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text(" ").lower()
+    result["valid"] = True
+
+    # Followers
+    match = re.search(r"([0-9,.]+)\s+followers", text)
+    if match:
+        followers = int(match.group(1).replace(",", ""))
+        result["followers"] = followers
+
+        if followers < 1000:
+            result["risk"] += 30
+        elif followers < 10000:
+            result["risk"] += 10
+    else:
+        result["risk"] += 40
+
+    # Transparency
+    if "page transparency" in text:
+        result["has_transparency"] = True
+    else:
+        result["risk"] += 25
+
+    # Profile picture
+    if "profilepicture" in html.lower():
+        result["profile_pic"] = True
+    else:
+        result["risk"] += 20
+
+    # Count posts
+    posts = re.findall(r"ago·", text)
+    result["posts_count"] = len(posts)
+
+    if result["posts_count"] < 3:
+        result["risk"] += 20
+
+    # Scam keywords
+    scam_words = ["giveaway", "win", "bonus", "gift", "free", "reward", "sponsored"]
+    if any(w in text for w in scam_words):
+        result["risk"] += 20
+
+    return result
+
+
+# ================================
+# 🔥 TELEGRAM OUTPUT FORMAT
 # ================================
 def format_result(r):
     msg = "🔍 *PRO SCAN RESULTS*\n\n"
@@ -170,7 +232,7 @@ def format_result(r):
     msg += f"🛡 *Google Blacklist:* {'❌ Unsafe' if r['safe_browsing'] else '✔ Clean'}\n"
 
     if r['domain_age'] == -1:
-        msg += "📅 *Domain Age:* ❌ Unknown / Suspicious\n"
+        msg += "📅 *Domain Age:* ❌ Unknown\n"
     else:
         msg += f"📅 *Domain Age:* {r['domain_age']} days\n"
 
@@ -181,7 +243,7 @@ def format_result(r):
     msg += f"\n⚠ *RISK SCORE:* {r['risk']}/100\n"
 
     if r['risk'] >= 70:
-        msg += "\n🚨 *HIGH RISK — DO NOT TRUST!*"
+        msg += "\n🚨 *HIGH RISK — SCAM LINK!*"
     elif r['risk'] >= 40:
         msg += "\n⚠ *Medium Risk — Be careful.*"
     else:
@@ -191,26 +253,49 @@ def format_result(r):
 
 
 # ================================
-# 🚨 AUTO ADMIN ALERT
+# 🚨 ADMIN ALERT
 # ================================
 def notify_admin(context, user, result):
     if result["risk"] >= 70:
         alert = f"""
 🚨 *Suspicious Link Alert!*
-
-👤 User: {user}
-🔗 Link: {result['original']}
+👤 User: @{user}
+🔗 {result['original']}
 ⚠ Risk Score: {result['risk']}/100
 """
         context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=alert, parse_mode="Markdown")
 
 
 # ================================
-# 🤖 TELEGRAM BOT HANDLER (v13.14)
+# 🤖 TELEGRAM HANDLER (V13)
 # ================================
 def handle_message(update, context):
+
     url = update.message.text.strip()
 
+    # Facebook Page Scan
+    if "facebook.com" in url:
+        fb = check_facebook_page(url)
+
+        if fb["valid"]:
+            fb_msg = "🔵 *FACEBOOK PAGE SCAN*\n\n"
+            fb_msg += f"👥 Followers: {fb['followers']}\n"
+            fb_msg += f"📝 Posts: {fb['posts_count']}\n"
+            fb_msg += f"🔍 Transparency: {'✔ Yes' if fb['has_transparency'] else '❌ No'}\n"
+            fb_msg += f"🖼 Profile Pic: {'✔ Yes' if fb['profile_pic'] else '❌ No'}\n"
+            fb_msg += f"⚠ Risk Score: {fb['risk']}/100\n"
+
+            if fb["risk"] >= 70:
+                fb_msg += "\n🚨 *HIGH RISK Facebook Scam!*"
+            elif fb["risk"] >= 40:
+                fb_msg += "\n⚠ *Medium Risk — Be careful.*"
+            else:
+                fb_msg += "\n🟢 *Low Risk — Looks OK.*"
+
+            update.message.reply_text(fb_msg, parse_mode="Markdown")
+            return  # stop here (Facebook scan only)
+
+    # Normal URL Scan
     if not url.startswith("http"):
         update.message.reply_text("❌ Please send a valid URL.")
         return
@@ -219,10 +304,8 @@ def handle_message(update, context):
 
     results = scan_url(url)
     reply = format_result(results)
-
     update.message.reply_text(reply, parse_mode="Markdown")
 
-    # ADMIN ALERT
     notify_admin(context, update.message.from_user.username, results)
 
 
