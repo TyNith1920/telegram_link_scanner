@@ -1,61 +1,60 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import re
 import requests
 import ssl
 import socket
 import whois
-from urllib.parse import urlparse
 import datetime
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from telegram.ext import Updater, MessageHandler, Filters
 
 
 # ================================
-# ⚙ CONFIG
+# 🔧 CONFIG
 # ================================
 TELEGRAM_TOKEN = "8403701105:AAFdYXTHK9I0ChIJn7RxSb7ak1qN43GCkUs"
 GOOGLE_API_KEY = "AIzaSyCOjfLfg3E2FXoEoaSd714iL91bpxZYN7g"
-ADMIN_CHAT_ID = 1000022305  # Change to your Telegram ID
+ADMIN_CHAT_ID = 1000022305   # Your Telegram User ID
 
-
-# ================================
-# 🛡 CUSTOM HEADERS (ACT LIKE REAL PHONE)
-# ================================
 MOBILE_HEADERS = {
-    "User-Agent":
-        "Mozilla/5.0 (Linux; Android 10; SM-G975F) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0 Mobile Safari/537.36",
-    "Accept-Language": "en-US,en;q=0.9"
+    "User-Agent": "Mozilla/5.0 (Linux; Android 10)",
 }
+
+
+# ================================
+# 🔄 EXPAND URL (Better Version)
+# ================================
+def expand_url(url):
+    try:
+        r = requests.get(url, timeout=10, allow_redirects=True)
+        return r.url if r.url else url
+    except:
+        return url
 
 
 # ================================
 # 🔍 GOOGLE SAFE BROWSING
 # ================================
 def check_safe_browsing(url):
-    endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GOOGLE_API_KEY}"
-
-    body = {
-        "client": {"clientId": "pro-scanner", "clientVersion": "2.0"},
-        "threatInfo": {
-            "threatTypes": [
-                "MALWARE",
-                "SOCIAL_ENGINEERING",
-                "UNWANTED_SOFTWARE"
-            ],
-            "platformTypes": ["ANY_PLATFORM"],
-            "threatEntryTypes": ["URL"],
-            "threatEntries": [{"url": url}],
-        },
-    }
-
     try:
-        response = requests.post(endpoint, json=body).json()
-        return "matches" in response
+        endpoint = f"https://safebrowsing.googleapis.com/v4/threatMatches:find?key={GOOGLE_API_KEY}"
+        body = {
+            "client": {"clientId": "scanner", "clientVersion": "1.0"},
+            "threatInfo": {
+                "threatTypes": [
+                    "MALWARE",
+                    "SOCIAL_ENGINEERING",
+                    "UNWANTED_SOFTWARE",
+                ],
+                "platformTypes": ["ANY_PLATFORM"],
+                "threatEntryTypes": ["URL"],
+                "threatEntries": [{"url": url}],
+            },
+        }
+        r = requests.post(endpoint, json=body)
+        data = r.json()
+        return "matches" in data
     except:
         return False
 
@@ -64,19 +63,22 @@ def check_safe_browsing(url):
 # 📅 DOMAIN AGE
 # ================================
 def check_domain_age(url):
-    domain = urlparse(url).netloc
     try:
+        domain = urlparse(url).netloc
         info = whois.whois(domain)
-        creation = info.creation_date
-        if isinstance(creation, list):
-            creation = creation[0]
-        return (datetime.datetime.now() - creation).days
+        created = info.creation_date
+
+        if isinstance(created, list):
+            created = created[0]
+
+        age = (datetime.datetime.now() - created).days
+        return age
     except:
         return -1
 
 
 # ================================
-# 🔒 SSL Check
+# 🔐 SSL CHECK
 # ================================
 def check_ssl(url):
     try:
@@ -93,200 +95,192 @@ def check_ssl(url):
 # 🎯 PHISHING WORDS
 # ================================
 def check_phishing_words(url):
-    words = ["verify", "login", "reset", "wallet", "crypto",
-             "bonus", "free", "bank", "update", "security",
-             "unlock", "recover", "gift"]
-    return any(w.lower() in url.lower() for w in words)
+    words = ["verify", "reset", "login", "crypto", "wallet", "bonus", "unlock"]
+    return any(w in url.lower() for w in words)
 
 
 # ================================
-# 🔁 EXPAND SHORT URL
-# ================================
-def expand_url(url):
-    try:
-        r = requests.get(url, timeout=6, allow_redirects=True)
-        return r.url
-    except:
-        return url
-
-
-# ================================
-# 🧩 STRUCTURE CHECK
+# ⚠ URL STRUCTURE
 # ================================
 def check_url_structure(url):
-    bad_chars = ["@", "%", "$", "&", "!", "\\"]
-    if any(ch in url for ch in bad_chars):
-        return True
-    if len(url) > 120:
-        return True
-    return False
+    bad_chars = ["@", "%", "$", "!", "\\"]
+    return any(c in url for c in bad_chars)
 
 
 # ================================
-# ⚠ RISK SCORE ENGINE
+# 🧮 RISK SCORE
 # ================================
-def calculate_risk(data):
+def calculate_risk(r):
     score = 0
-    if data["safe"]: score += 40
-    if data["age"] != -1 and data["age"] < 60: score += 20
-    if not data["ssl"]: score += 20
-    if data["phish"]: score += 15
-    if data["struct"]: score += 5
+    if r["safe"]: score += 40
+    if r["age"] != -1 and r["age"] < 60: score += 20
+    if not r["ssl"]: score += 20
+    if r["phish"]: score += 10
+    if r["structure"]: score += 10
     return score
 
 
 # ================================
-# 🔍 URL SCAN
+# 🔍 MAIN URL SCAN
 # ================================
 def scan_url(url):
     expanded = expand_url(url)
-
-    result = {
+    results = {
         "orig": url,
         "exp": expanded,
         "safe": check_safe_browsing(expanded),
         "age": check_domain_age(expanded),
         "ssl": check_ssl(expanded),
         "phish": check_phishing_words(expanded),
-        "struct": check_url_structure(expanded)
+        "structure": check_url_structure(expanded),
     }
-
-    result["risk"] = calculate_risk(result)
-    return result
-
-
-# ================================
-# 🔵 IMPROVED FACEBOOK PAGE SCANNER
-# ================================
-def check_facebook_page(url):
-    fb = {
-        "valid": False,
-        "followers": None,
-        "likes": None,
-        "category": None,
-        "posts": 0,
-        "profile_pic": False,
-        "risk": 0
-    }
-
-    if "facebook.com" not in url:
-        return fb
-
-    # Use mobile version for scraping
-    mobile_url = url.replace("www.facebook.com", "m.facebook.com")
-
-    try:
-        html = requests.get(mobile_url, headers=MOBILE_HEADERS, timeout=10).text
-    except:
-        return fb
-
-    soup = BeautifulSoup(html, "html.parser")
-    text = soup.get_text(" ").lower()
-    fb["valid"] = True
-
-    # Followers
-    match = re.search(r"([0-9,.]+)\s+followers", text)
-    if match:
-        fb["followers"] = int(match.group(1).replace(",", ""))
-        if fb["followers"] < 500: fb["risk"] += 40
-        elif fb["followers"] < 2000: fb["risk"] += 20
-
-    else:
-        fb["risk"] += 30  # no follower info
-
-    # Category
-    cat = soup.find("div", string=re.compile("category", re.I))
-    if cat:
-        fb["category"] = cat.text.strip()
-
-    # Posts detection
-    posts = re.findall(r"ago", text)
-    fb["posts"] = len(posts)
-    if fb["posts"] <= 1:
-        fb["risk"] += 25
-
-    # Profile picture
-    if "profile picture" in text or "profilephoto" in html.lower():
-        fb["profile_pic"] = True
-    else:
-        fb["risk"] += 20
-
-    # Scam terms
-    scam_words = ["win", "bonus", "gift", "reward", "giveaway", "free", "លុយឥតគិត"]
-    if any(w in text for w in scam_words):
-        fb["risk"] += 30
-
-    return fb
-
-
-# ================================
-# 📩 FORMAT FACEBOOK RESULT
-# ================================
-def format_fb(fb):
-    msg = "🔵 *FACEBOOK PAGE SCAN*\n\n"
-
-    msg += f"👥 Followers: {fb['followers']}\n"
-    msg += f"📝 Posts: {fb['posts']}\n"
-    msg += f"🏷 Category: {fb['category']}\n"
-    msg += f"🖼 Profile Pic: {'✔ Yes' if fb['profile_pic'] else '❌ No'}\n"
-    msg += f"⚠ Risk Score: {fb['risk']}/100\n\n"
-
-    if fb["risk"] >= 70:
-        msg += "🚨 *HIGH RISK Facebook Scam!*"
-    elif fb["risk"] >= 40:
-        msg += "⚠ *Medium Risk Page — Be careful.*"
-    else:
-        msg += "🟢 *Low Risk — Looks OK.*"
-
-    return msg
+    results["risk"] = calculate_risk(results)
+    return results
 
 
 # ================================
 # 📩 FORMAT URL RESULT
 # ================================
 def format_url(r):
-    msg = "🔍 *PRO URL SCAN RESULTS*\n\n"
-    msg += f"🔗 *Original:* {r['orig']}\n"
-    msg += f"↪ *Expanded:* {r['exp']}\n\n"
+    msg = "🔍 **PRO URL SCAN RESULTS** 🔍\n\n"
+    msg += f"🔗 Original: {r['orig']}\n"
+    msg += f"↪ Expanded: {r['exp']}\n\n"
 
-    msg += f"🛡 Google Blacklist: {'❌ Unsafe' if r['safe'] else '✔ Clean'}\n"
-    msg += f"📅 Domain Age: {r['age']} days\n" if r['age'] != -1 else "📅 Domain Age: ❌ Unknown\n"
-    msg += f"🔒 SSL: {'✔ Valid' if r['ssl'] else '❌ No SSL'}\n"
-    msg += f"🎯 Phishing Words: {'❌ Found' if r['phish'] else '✔ None'}\n"
-    msg += f"🏗 Structure: {'❌ Suspicious' if r['struct'] else '✔ Normal'}\n"
-    msg += f"\n⚠ Risk Score: {r['risk']}/100\n"
+    msg += f"🛡 Google Safe Browsing: {'❌ Unsafe' if r['safe'] else '✔ Clean'}\n"
 
-    if r["risk"] >= 70:
-        msg += "\n🚨 *HIGH RISK — SCAM LINK!*"
-    elif r["risk"] >= 40:
-        msg += "\n⚠ Medium Risk"
+    if r["age"] == -1:
+        msg += "📅 Domain Age: ❓ Unknown\n"
     else:
-        msg += "\n🟢 Low Risk"
+        msg += f"📅 Domain Age: {r['age']} days\n"
+
+    msg += f"🔒 SSL: {'✔ Yes' if r['ssl'] else '❌ No SSL'}\n"
+    msg += f"🎯 Phishing Words: {'❌ Detected' if r['phish'] else '✔ None'}\n"
+    msg += f"🌍 URL Structure: {'❌ Suspicious' if r['structure'] else '✔ Normal'}\n"
+    msg += f"\n⚠ RISK SCORE: {r['risk']}/100\n"
+
+    if r['risk'] >= 70:
+        msg += "🚨 **HIGH RISK — Dangerous link!**"
+    elif r['risk'] >= 40:
+        msg += "⚠ Medium Risk — Be careful."
+    else:
+        msg += "🟢 Low Risk — Looks OK."
+
+    return msg
+
+
+# ==========================================
+# 🔄 RESOLVE FACEBOOK SHARE LINKS
+# ==========================================
+def resolve_facebook_share(url):
+    if "/share/" not in url:
+        return url
+
+    try:
+        r = requests.get(url, headers=MOBILE_HEADERS, allow_redirects=True, timeout=10)
+        return r.url
+    except:
+        return url
+
+
+# ==========================================
+# 🔍 FACEBOOK PAGE SCAN
+# ==========================================
+def check_facebook_page(url):
+    try:
+        r = requests.get(url, headers=MOBILE_HEADERS, timeout=10)
+        soup = BeautifulSoup(r.text, "lxml")
+
+        # Followers
+        followers = None
+        tag = soup.find("div", string=re.compile("followers"))
+        if tag:
+            followers = tag.text.replace("followers", "").strip()
+
+        # Posts
+        posts = len(soup.find_all("article"))
+
+        # Category
+        cat = None
+        cat_tag = soup.find("div", {"data-key": "tab_about"})
+        if cat_tag:
+            cat = cat_tag.text.strip()
+
+        # Profile picture
+        has_pic = bool(soup.find("image"))
+
+        # Risk rules
+        risk = 0
+        if followers in [None, "0"]: risk += 30
+        if posts == 0: risk += 30
+        if not has_pic: risk += 15
+
+        return {
+            "url": url,
+            "followers": followers,
+            "posts": posts,
+            "category": cat,
+            "pic": has_pic,
+            "risk": risk
+        }
+
+    except Exception:
+        return None
+
+
+# ================================
+# 📩 FORMAT FACEBOOK RESULT
+# ================================
+def format_fb(f):
+    if not f:
+        return "❌ Cannot read Facebook page."
+
+    msg = "🔵 **FACEBOOK PAGE SCAN**\n\n"
+    msg += f"👥 Followers: {f['followers']}\n"
+    msg += f"📝 Posts: {f['posts']}\n"
+    msg += f"📂 Category: {f['category']}\n"
+    msg += f"🖼 Profile Picture: {'✔ Yes' if f['pic'] else '❌ No'}\n"
+    msg += f"⚠ Risk Score: {f['risk']}/100\n\n"
+
+    if f["risk"] >= 70:
+        msg += "🚨 **HIGH RISK Facebook Scam!**"
+    elif f["risk"] >= 40:
+        msg += "⚠ Medium Risk — Be careful."
+    else:
+        msg += "🟢 Low Risk — Looks OK."
 
     return msg
 
 
 # ================================
-# 🤖 TELEGRAM HANDLER
+# 🤖 HANDLE MESSAGES
 # ================================
 def handle_message(update, context):
     text = update.message.text.strip()
 
-    # Facebook page scan
+    # Facebook share → resolve
+    if "facebook.com/share/" in text:
+        update.message.reply_text("🔄 Resolving Facebook share link...")
+        real = resolve_facebook_share(text)
+        update.message.reply_text(f"↪ Real link: {real}")
+
+        fb = check_facebook_page(real)
+        update.message.reply_text(format_fb(fb), parse_mode="Markdown")
+        return
+
+    # Facebook page
     if "facebook.com" in text:
         fb = check_facebook_page(text)
-        reply = format_fb(fb)
-        update.message.reply_text(reply, parse_mode="Markdown")
+        update.message.reply_text(format_fb(fb), parse_mode="Markdown")
         return
 
-    # Normal URL scan
-    if not text.startswith("http"):
-        update.message.reply_text("❌ Please send a valid URL.")
+    # Normal URL
+    if text.startswith("http"):
+        update.message.reply_text("⏳ Scanning link...")
+        r = scan_url(text)
+        update.message.reply_text(format_url(r), parse_mode="Markdown")
         return
 
-    update.message.reply_text("⏳ Scanning... please wait...")
-    r = scan_url(text)
-    update.message.reply_text(format_url(r), parse_mode="Markdown")
+    update.message.reply_text("❌ Please send a valid link.")
 
 
 # ================================
@@ -296,7 +290,7 @@ def main():
     updater = Updater(TELEGRAM_TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    dp.add_handler(MessageHandler(Filters.text, handle_message))
 
     updater.start_polling()
     updater.idle()
